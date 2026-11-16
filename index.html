@@ -541,7 +541,6 @@ body{overflow:hidden}
       </header>
       <div class="stage" id="stage">
         <video id="vid" muted playsinline preload="auto"></video>
-        <canvas id="overlay" aria-hidden="true"></canvas>
         <span class="corner tl"></span><span class="corner tr"></span><span class="corner bl"></span><span class="corner br"></span>
         <div class="scanline" aria-hidden="true"></div>
         <div class="hud tl"><i class="live-dot"></i><span>FISH-042</span><span class="sep">/</span><span>池 A · 东区</span></div>
@@ -559,7 +558,6 @@ body{overflow:hidden}
             <div class="scrub-knob" id="scrubKnob"></div>
           </div>
           <button class="icon-btn" id="rate" aria-label="播放速度">1×</button>
-          <button class="icon-btn" id="overlayBtn" aria-pressed="true" aria-label="切换轨迹叠加">轨迹叠加</button>
         </div>
       </div>
     </article>
@@ -722,21 +720,6 @@ const smSpeed = smooth(speed, 12);
 const smSync = smooth(sync, 12);
 const smSpread = smooth(spread, 12);
 const smPeak = smooth(peak, 6);
-
-// 显示层轨迹平滑：仅用于叠加与回溯绘制，统计指标保持原始值
-const SPOS = new Array(FRAMES);
-for (let f = 0; f < FRAMES; f++){
-  SPOS[f] = new Array(N);
-  for (let i = 0; i < N; i++){
-    const p = DET[f][i];
-    let sx = 0, sy = 0, n = 0;
-    for (let k = Math.max(0, f - 3); k <= Math.min(LAST, f + 3); k++){
-      const q = DET[k][i];
-      if (Math.abs(q[0] - p[0]) < 30 && Math.abs(q[1] - p[1]) < 30){ sx += q[0]; sy += q[1]; n++; }
-    }
-    SPOS[f][i] = n ? [sx / n, sy / n] : p;
-  }
-}
 
 /* ---------- 行为分段 ---------- */
 const TYPES = {
@@ -983,10 +966,10 @@ function updateAgent(seg, index){
 /* ---------- 播放控制 ---------- */
 const playBtn = $('#play'), playIcon = $('#playIcon');
 const scrub = $('#scrub'), scrubProgress = $('#scrubProgress'), scrubKnob = $('#scrubKnob');
-const rateBtn = $('#rate'), overlayBtn = $('#overlayBtn');
+const rateBtn = $('#rate');
 const ICON_PLAY = '<path d="M2.6 1.6 10 6 2.6 10.4Z" fill="currentColor"/>';
 const ICON_PAUSE = '<rect x="2.4" y="1.8" width="2.3" height="8.4" rx=".5" fill="currentColor"/><rect x="7.3" y="1.8" width="2.3" height="8.4" rx=".5" fill="currentColor"/>';
-let rate = 1, overlayOn = true;
+let rate = 1;
 
 function setPlayIcon(playing){ playIcon.innerHTML = playing ? ICON_PAUSE : ICON_PLAY; }
 function togglePlay(){
@@ -1000,12 +983,6 @@ rateBtn.addEventListener('click', () => {
   rate = rate === 1 ? 2 : rate === 2 ? 0.5 : 1;
   vid.playbackRate = rate;
   rateBtn.textContent = rate + '×';
-});
-overlayBtn.addEventListener('click', () => {
-  overlayOn = !overlayOn;
-  overlayBtn.setAttribute('aria-pressed', String(overlayOn));
-  overlayBtn.style.opacity = overlayOn ? '1' : '.55';
-  draw(fCurrent, true);
 });
 
 function seekFrame(f, keepPlaying){
@@ -1048,57 +1025,6 @@ function fit(canvas){
   const ctx = canvas.getContext('2d');
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   return { ctx, w, h };
-}
-
-/* ---------- 视频叠加 ---------- */
-const overlay = $('#overlay');
-let ovW = 0, ovH = 0;
-function drawOverlay(f){
-  const { ctx, w, h } = fit(overlay);
-  ovW = w; ovH = h;
-  ctx.clearRect(0, 0, w, h);
-  if (!overlayOn) return;
-  const scale = Math.min(w / W, h / H);
-  const ox = (w - W * scale) / 2, oy = (h - H * scale) / 2;
-  const X = x => ox + x * scale, Y = y => oy + y * scale;
-  const from = Math.max(0, f - 100);
-  ctx.lineCap = 'round';
-
-  for (let i = 0; i < N; i++){
-    ctx.beginPath();
-    let drawing = false;
-    for (let k = from; k < f; k++){
-      const a = SPOS[k][i], b = SPOS[k+1][i];
-      if (Math.hypot(b[0]-a[0], b[1]-a[1]) < 13){
-        if (!drawing){ ctx.moveTo(X(a[0]), Y(a[1])); drawing = true; }
-        ctx.lineTo(X(b[0]), Y(b[1]));
-      } else drawing = false;
-    }
-    const age = (f - from) / 100;
-    ctx.strokeStyle = 'rgba(2,8,10,.38)';
-    ctx.lineWidth = 2.5;
-    ctx.stroke();
-    ctx.strokeStyle = hexA(COLORS[i], 0.24 + age * 0.44);
-    ctx.lineWidth = 1.3;
-    ctx.stroke();
-  }
-
-  for (let i = 0; i < N; i++){
-    const p = SPOS[f][i];
-    const x = X(p[0]), y = Y(p[1]);
-    ctx.beginPath();
-    ctx.arc(x, y, 4.2, 0, Math.PI*2);
-    ctx.fillStyle = COLORS[i];
-    ctx.shadowColor = COLORS[i];
-    ctx.shadowBlur = 9;
-    ctx.fill();
-    ctx.shadowBlur = 0;
-    ctx.beginPath();
-    ctx.arc(x, y, 4.2, 0, Math.PI*2);
-    ctx.strokeStyle = 'rgba(255,255,255,.85)';
-    ctx.lineWidth = 1;
-    ctx.stroke();
-  }
 }
 
 /* ---------- 趋势图 ---------- */
@@ -1255,7 +1181,6 @@ function draw(f, force){
   evSync.innerHTML = Math.round(sy * 100) + '<u>%</u>';
   evPeak.innerHTML = pk.toFixed(2) + '<u>m/s</u>';
 
-  drawOverlay(f);
   drawTrendCursor(f);
   renderEvents(f);
 }
